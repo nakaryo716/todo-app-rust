@@ -93,21 +93,26 @@ impl TodoRepository for TodoRepositoryForMemory {
         Vec::from_iter(store.values().map(|todo| todo.clone()))
     }
 
+    // 本当はBoxで返した方がいいかも
     fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo> {
         let mut store = self.write_store_ref();
         let todo = store
             .get(&id)
             .context(RepositoryError::NotFound(id))?;
+
+        // UpdateTodoにtextがなかったらstoreのクローンを返す
         let text= if payload.text.is_empty() {
             todo.text.clone()
         } else {
             payload.text
         };
 
+        // unwrap()を使いたかったがなぜかコンパイルエラーになってしまった。
+        // あまりいい書き方ではない
         let completed = if payload.completed{
-            todo.completed.clone()
+            true
         } else {
-            payload.completed
+            false
         };
 
 
@@ -124,5 +129,56 @@ impl TodoRepository for TodoRepositoryForMemory {
         let mut store = self.write_store_ref();
         store.remove(&id).ok_or(RepositoryError::NotFound(id))?;
         Ok(())
+    }
+}
+
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn todo_crud_scenario() {
+        let text = String::from("todo text");
+        let id = 1;
+        let expected = Todo::new(id ,text.clone());
+        
+        // creat
+        let repository = TodoRepositoryForMemory::new();
+        let todo = repository.creat(CreatTodo { text });
+        assert_eq!(expected, todo);
+
+        // find
+        let todo = repository.find(todo.id).unwrap();
+        assert_eq!(expected, todo);
+
+        // all
+        let todo = repository.all();
+        assert_eq!(vec![expected], todo);
+
+        // update
+        let text = String::from("update todo text");
+        let todo = repository.update(
+            1,
+            UpdateTodo {
+                text: text.clone(),
+                completed: true,
+            }
+         ).expect("failed update todo");
+
+         assert_eq!(
+            Todo {
+                id,
+                text,
+                completed: true,
+            },
+            todo,
+         );
+
+        //  delete
+        let res = repository.delete(id);
+        assert!(res.is_ok());
+
     }
 }
