@@ -46,10 +46,7 @@ async fn root() -> &'static str {
     "Hello World!"
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
-struct CreatUser {
-    username: String,
-}
+
 
 #[cfg(test)]
 mod test {

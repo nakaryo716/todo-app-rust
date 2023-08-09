@@ -1,9 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockWriteGuard, RwLockReadGuard},
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use anyhow::Context;
 
 #[derive(Debug, Error)]
 enum RepositoryError {
@@ -60,26 +61,68 @@ impl TodoRepositoryForMemory {
             store: Arc::default(),
         }
     }
+
+    fn write_store_ref(&self) -> RwLockWriteGuard<TodoDatas> {
+        self.store.write().unwrap()
+    }
+
+    fn read_store_ref(&self) -> RwLockReadGuard<TodoDatas> {
+        self.store.read().unwrap()
+    }
 }
+
 
 impl TodoRepository for TodoRepositoryForMemory {
     fn creat(&self, payload: CreatTodo) -> Todo {
-        todo!();
+        let mut store = self.write_store_ref();
+        // idは保存済みの長さ + 1　で管理する
+        let id = (store.len() + 1) as i32; 
+        let todo = Todo::new(id, payload.text.clone());
+        store.insert(id, todo.clone());
+
+        todo
     }
 
     fn find(&self, id: i32) -> Option<Todo> {
-        todo!();
+        let store = self.read_store_ref();
+        store.get(&id).map(|todo| todo.clone())
     }
 
     fn all(&self) -> Vec<Todo> {
-        todo!();
+        let store = self.read_store_ref();
+        Vec::from_iter(store.values().map(|todo| todo.clone()))
     }
 
     fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo> {
-        todo!();
+        let mut store = self.write_store_ref();
+        let todo = store
+            .get(&id)
+            .context(RepositoryError::NotFound(id))?;
+        let text= if payload.text.is_empty() {
+            todo.text.clone()
+        } else {
+            payload.text
+        };
+
+        let completed = if payload.completed{
+            todo.completed.clone()
+        } else {
+            payload.completed
+        };
+
+
+        let todo = Todo {
+            id,
+            text,
+            completed,
+        };
+        store.insert(id, todo.clone());
+        Ok(todo)
     }
 
     fn delete(&self, id: i32) -> anyhow::Result<()> {
-        todo!();
+        let mut store = self.write_store_ref();
+        store.remove(&id).ok_or(RepositoryError::NotFound(id))?;
+        Ok(())
     }
 }
