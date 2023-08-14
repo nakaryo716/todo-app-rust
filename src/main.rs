@@ -11,13 +11,12 @@ use std::net::SocketAddr;
 use std::{env,sync::Arc};
 
 use repositories::{TodoRepository, TodoRepositoryForMemory};
-use handlers::create_todo;
+use handlers::{all_todo, create_todo, delete_todo, find_todo, update_todo };
 
 
 
 #[tokio::main]
 async fn main() {
-    // do git clone 
     let log_level = env::var("RUST_LOG").unwrap_or("info".to_string());
     env::set_var("RUST_LOG", log_level);
     tracing_subscriber::fmt::init();
@@ -36,7 +35,8 @@ async fn main() {
 fn creat_app<T: TodoRepository>(repository: T) -> Router {
     Router::new()
         .route("/", get(root))
-        .route("/todos", post(create_todo::<T>))
+        .route("/todos", post(create_todo::<T>).get(all_todo::<T>))
+        .route("/todos/:id", get(find_todo::<T>).delete(delete_todo::<T>).patch(update_todo::<T>))
         .layer(Extension(Arc::new(repository)))
 }
 
