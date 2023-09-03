@@ -51,7 +51,12 @@ async fn root() -> &'static str {
 #[cfg(test)]
 mod test {
     use super::*;
-    use axum::{body::Body, http::Request};
+    use crate::repositories::{CreatTodo, Todo};
+    use axum::response::Response;
+    use axum::{
+        body::Body,
+        http::{header, Method, Request, StatusCode},
+    };
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -65,5 +70,49 @@ mod test {
         let body = String::from_utf8(bytes.to_vec()).unwrap();
 
         assert_eq!(body, "Hello World!");
+    }
+
+    fn build_todo_req_with_json(path: &str, method: Method, json_body: String) -> Request<Body> {
+        Request::builder()
+            .uri(path)
+            .method(method)
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(json_body))
+            .unwrap()
+    }
+
+    fn build_todo_req_with_empty(method: Method, path: &str) -> Request<Body> {
+        Request::builder()
+            .uri(path)
+            .method(method)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn res_to_todo(res: Response) -> Todo {
+        let bytes = hyper::body::to_bytes(res.into_body()).await.unwrap();
+
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+
+        let todo = serde_json::from_str(&body).expect(&format!("cannot convert instance. body:{}", body));
+        todo
+    }
+
+    #[tokio::test]
+    async fn shoudl_created_todo() {
+        let expect = Todo::new(1, "should_return_created_todo".to_string());
+
+        let repository = TodoRepositoryForMemory::new();
+
+        let req = build_todo_req_with_json(
+            "/todos",
+            Method::POST,
+            r#"{"text: "should_return_created_todo"}"#.to_string(),
+        );
+
+        let res = creat_app(repository).oneshot(req).await.unwrap();
+
+        let todo = res_to_todo(res).await;
+        assert_eq!(expect, todo)
     }
 }
