@@ -67,7 +67,7 @@ pub async fn update_todo<T: TodoRepository>(
 ) -> Result<impl IntoResponse, StatusCode> {
     let todo = repository
         .update(id, payload)
-        .or(Err((StatusCode::NOT_FOUND)))?;
+        .or(Err(StatusCode::NOT_FOUND))?;
 
     Ok((StatusCode::OK, Json(todo)))
 }
