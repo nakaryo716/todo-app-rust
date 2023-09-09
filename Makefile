@@ -7,5 +7,12 @@ db:
 dev:
 	cargo watch -x run
 
-text:
+test:
 	cargo test
+
+flow:
+	docker-compose build,
+	docker-compose up,
+	docker exec -it {id} bash,
+	psql -U admin todos,
+	
