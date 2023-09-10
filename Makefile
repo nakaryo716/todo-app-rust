@@ -5,14 +5,11 @@ db:
 	docker-compose up
 
 dev:
+	sqlx db create
+	sqlx migrate run
 	cargo watch -x run
 
 test:
 	cargo test
 
-flow:
-	docker-compose build,
-	docker-compose up,
-	docker exec -it {id} bash,
-	psql -U admin todos,
 	
