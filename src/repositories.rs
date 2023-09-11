@@ -12,15 +12,6 @@ enum RepositoryError {
     NotFound(i32),
 }
 
-#[async_trait]
-pub trait TodoRepository: Clone + std::marker::Send + std::marker::Sync + 'static {
-    async fn creat(&self, payload: CreatTodo) -> anyhow::Result<Todo>;
-    async fn find(&self, id: i32) -> anyhow::Result<Todo>;
-    async fn all(&self) -> anyhow::Result<Vec<Todo>>;
-    async fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo>;
-    async fn delete(&self, id: i32) -> anyhow::Result<()>;
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, FromRow)]
 pub struct Todo {
     id: i32,
@@ -52,8 +43,6 @@ impl Todo {
         }
     }
 }
-
-
 
 #[derive(Debug, Clone)]
 pub struct TodoRepositoryForDb {
@@ -113,17 +102,30 @@ impl TodoRepository for TodoRepositoryForDb {
         Ok(todos)
     }
 
-    async fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo> {
+     async fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo> {
         let old_todo = self.find(id).await?;
+
+        let text = if payload.text.is_empty() {
+            old_todo.text.clone()
+        } else {
+            payload.text.clone()
+        };
+
+        let judge = if payload.text.is_empty() {
+            old_todo.completed
+        }  else {
+            payload.completed
+        };
+
         let todo = sqlx::query_as::<_, Todo>(
             r#"
-update todos set text=$1, completed=$2
-where id=$3
-returning *
-        "#,
+            update todos set text=$1, completed=$2
+            where id=$3
+            returning *
+                "#,
         )
-        .bind(payload.text.unwrap_or(old_todo.text))
-        .bind(payload.completed.unwrap_or(old_todo.completed))
+        .bind(&text)
+        .bind(judge)
         .bind(id)
         .fetch_one(&self.pool)
         .await?;
@@ -149,3 +151,15 @@ returning *
 
     }
 }
+#[async_trait]
+pub trait TodoRepository: Clone + std::marker::Send + std::marker::Sync + 'static {
+    async fn creat(&self, payload: CreatTodo) -> anyhow::Result<Todo>;
+    async fn find(&self, id: i32) -> anyhow::Result<Todo>;
+    async fn all(&self) -> anyhow::Result<Vec<Todo>>;
+    async fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo>;
+    async fn delete(&self, id: i32) -> anyhow::Result<()>;
+}
+
+
+
+
