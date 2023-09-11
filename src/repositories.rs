@@ -1,15 +1,13 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock, RwLockWriteGuard, RwLockReadGuard},
-};
 use axum::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use anyhow::{Context, Ok};
 use validator::Validate;
+use sqlx::{FromRow, PgPool};
 
 #[derive(Debug, Error)]
 enum RepositoryError {
+    #[error("Unexpected Error: [{0}]")]
+    Unexpected(String),
     #[error("NotFound id is {0}")]
     NotFound(i32),
 }
@@ -23,7 +21,7 @@ pub trait TodoRepository: Clone + std::marker::Send + std::marker::Sync + 'stati
     async fn delete(&self, id: i32) -> anyhow::Result<()>;
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, FromRow)]
 pub struct Todo {
     id: i32,
     text: String,
@@ -55,142 +53,99 @@ impl Todo {
     }
 }
 
-type TodoDatas = HashMap<i32, Todo>;
+
 
 #[derive(Debug, Clone)]
-pub struct TodoRepositoryForMemory {
-    store: Arc<RwLock<TodoDatas>>,
+pub struct TodoRepositoryForDb {
+    pool: PgPool,
 }
 
-impl TodoRepositoryForMemory {
-    pub fn new() -> Self {
-        TodoRepositoryForMemory {
-            store: Arc::default(),
-        }
-    }
-
-    fn write_store_ref(&self) -> RwLockWriteGuard<TodoDatas> {
-        self.store.write().unwrap()
-    }
-
-    fn read_store_ref(&self) -> RwLockReadGuard<TodoDatas> {
-        self.store.read().unwrap()
+impl TodoRepositoryForDb {
+    pub fn new(pool: PgPool) -> Self {
+        TodoRepositoryForDb { pool }
     }
 }
 
 #[async_trait]
-impl TodoRepository for TodoRepositoryForMemory {
+impl TodoRepository for TodoRepositoryForDb {
     async fn creat(&self, payload: CreatTodo) -> anyhow::Result<Todo> {
-        let mut store = self.write_store_ref();
-        // idは保存済みの長さ + 1　で管理する
-        let id = (store.len() + 1) as i32; 
-        let todo = Todo::new(id, payload.text.clone());
-        store.insert(id, todo.clone());
+        let todo = sqlx::query_as::<_, Todo>(
+            r#"
+                insert into todos (text, completed)
+                values ($1, false)
+                returning *
+            "#,
+        )
+        .bind(payload.text.clone())
+        .fetch_one(&self.pool)
+        .await?;
 
         Ok(todo)
     }
+    
+    async fn find(&self, id: i32) -> anyhow::Result<Todo> {
+        let todo = sqlx::query_as::<_, Todo>(
+            r#"
+                select * from todos where id=$1
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => RepositoryError::NotFound(id),
+            _ => RepositoryError::Unexpected(e.to_string()),
+        })?;
 
-    async fn find(&self, id: i32) -> anyhow::Result<Todo>{
-        let store = self.read_store_ref();
-        let todo = store
-            .get(&id)
-            .map(|todo| todo.clone())
-            .ok_or(RepositoryError::NotFound((id)))?;
         Ok(todo)
     }
 
     async fn all(&self) -> anyhow::Result<Vec<Todo>> {
-        let store = self.read_store_ref();
-        let todo = Vec::from_iter(store.values().map(|todo| todo.clone()));
-        Ok(todo)
+        let todos = sqlx::query_as::<_, Todo>(
+            r#"
+                select * from todos
+                order by id desc;
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(todos)
     }
 
-    // 本当はBoxで返した方がいいかも
     async fn update(&self, id: i32, payload: UpdateTodo) -> anyhow::Result<Todo> {
-        let mut store = self.write_store_ref();
-        let todo = store
-            .get(&id)
-            .context(RepositoryError::NotFound(id))?;
+        let old_todo = self.find(id).await?;
+        let todo = sqlx::query_as::<_, Todo>(
+            r#"
+update todos set text=$1, completed=$2
+where id=$3
+returning *
+        "#,
+        )
+        .bind(payload.text.unwrap_or(old_todo.text))
+        .bind(payload.completed.unwrap_or(old_todo.completed))
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
 
-        // UpdateTodoにtextがなかったらstoreのクローンを返す
-        let text= if payload.text.is_empty() {
-            todo.text.clone()
-        } else {
-            payload.text
-        };
-
-        // unwrap()を使いたかったがなぜかコンパイルエラーになってしまった。
-        // あまりいい書き方ではない
-        let completed = if payload.completed{
-            true
-        } else {
-            false
-        };
-
-
-        let todo = Todo {
-            id,
-            text,
-            completed,
-        };
-        store.insert(id, todo.clone());
         Ok(todo)
     }
 
     async fn delete(&self, id: i32) -> anyhow::Result<()> {
-        let mut store = self.write_store_ref();
-        store.remove(&id).ok_or(RepositoryError::NotFound(id))?;
+        sqlx::query(
+            r#"
+                delete from todos where id=$1
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => RepositoryError::NotFound(id),
+            _ => RepositoryError::Unexpected(e.to_string()),
+        })?;
+
         Ok(())
-    }
-}
-
-
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[tokio::test]
-    async fn todo_crud_scenario() {
-        let text = String::from("todo text");
-        let id = 1;
-        let expected = Todo::new(id ,text.clone());
-        
-        // creat
-        let repository = TodoRepositoryForMemory::new();
-        let todo = repository.creat(CreatTodo { text }).await.expect("failed creat todo");
-        assert_eq!(expected, todo);
-
-        // find
-        let todo = repository.find(todo.id).await.unwrap();
-        assert_eq!(expected, todo);
-
-        // all
-        let todo = repository.all().await.expect("failed get all");
-        assert_eq!(vec![expected], todo);
-
-        // update
-        let text = String::from("update todo text");
-        let todo = repository.update(
-            1,
-            UpdateTodo {
-                text: text.clone(),
-                completed: true,
-            }
-         ).await.expect("failed update todo");
-
-         assert_eq!(
-            Todo {
-                id,
-                text,
-                completed: true,
-            },
-            todo,
-         );
-
-        //  delete
-        let res = repository.delete(id).await;
-        assert!(res.is_ok());
 
     }
 }
